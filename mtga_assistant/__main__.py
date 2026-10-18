@@ -645,8 +645,8 @@ def emit_seat_status(args: argparse.Namespace, status: str, seat: int | None = N
     elif status == 'confirmed' and seat in (1, 2):
         print(f'Confirmed signed-in Arena account on system seat {seat}.', flush=True)
     elif status == 'unconfirmed':
-        print('Arena account-to-player identity is no longer unique; model advice is paused. '
-              'Stop Watch and choose a seat manually.', flush=True)
+        print('Waiting to confirm your Arena seat; model advice is paused and will resume '
+              'when identification is restored.', flush=True)
 
 
 def emit_opponent_estimate(report: dict, args: argparse.Namespace) -> None:
@@ -1202,8 +1202,10 @@ def main(argv: list[str] | None = None) -> int:
                         emit_seat_status(args, 'confirmed', detected_seat)
                     if detected_seat is None and previous_seat is not None:
                         emit_seat_status(args, 'unconfirmed')
-                        if worker is not None and args.model:
-                            model_released = release_watch_model(worker, args.model, args)
+                        # Keep the prewarmed worker alive while identity is
+                        # unresolved. The branch below discards old results
+                        # and submits nothing until a seat is confirmed.
+                        # Closing it here made recovery permanently silent.
                     active_seat = detected_seat
                     last_signature = ''
                     last_decision_analysis = None

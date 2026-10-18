@@ -25,7 +25,7 @@ class ArenaSeatResolver:
         self.seat = None
 
     @staticmethod
-    def _room_players(payload: dict[str, Any]) -> tuple[str | None, list[Any]] | None:
+    def _room_players(payload: dict[str, Any]) -> tuple[str | None, list[Any] | None] | None:
         event = payload.get('matchGameRoomStateChangedEvent')
         if not isinstance(event, dict):
             return None
@@ -38,11 +38,16 @@ class ArenaSeatResolver:
         if not isinstance(match_id, str) or not match_id:
             final = room.get('finalMatchResult')
             match_id = final.get('matchId') if isinstance(final, dict) else None
-        players = room.get('players')
-        if not isinstance(players, list):
-            players = config.get('reservedPlayers')
-        if not isinstance(players, list):
-            return (match_id if isinstance(match_id, str) else None, [])
+        # Missing fields are a partial room update, not an empty roster.
+        # Explicit malformed/empty rosters still revoke the mapping.
+        if 'players' in room:
+            players = room['players']
+            players = players if isinstance(players, list) else []
+        elif 'reservedPlayers' in config:
+            players = config['reservedPlayers']
+            players = players if isinstance(players, list) else []
+        else:
+            players = None
         return (match_id if isinstance(match_id, str) else None, players)
 
     def _resolve(self, players: list[Any]) -> int | None:
@@ -70,16 +75,18 @@ class ArenaSeatResolver:
         if not isinstance(payload, dict):
             return self.seat
         auth = payload.get('authenticateResponse')
-        if isinstance(auth, dict):
+        if isinstance(auth, dict) and 'screenName' in auth:
             name = auth.get('screenName')
             self.screen_name = name.strip().casefold() if isinstance(name, str) and name.strip() else None
             self.seat = self._resolve(self.players)
         room = self._room_players(payload)
         if room is not None:
             match_id, players = room
-            if match_id != self.match_id:
-                self.seat = None
-            self.match_id = match_id
-            self.players = players
+            if match_id is not None and match_id != self.match_id:
+                self.reset()
+            if match_id is not None:
+                self.match_id = match_id
+            if players is not None:
+                self.players = players
             self.seat = self._resolve(self.players)
         return self.seat

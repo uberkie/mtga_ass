@@ -263,7 +263,8 @@ def _validated_desktop_event(raw: object) -> dict | None:
             event.get('legal_status') != 'unverified' or not isinstance(text, str) or
             len(text) > 4000 or any(not (char.isprintable() or char in '\n\t') for char in text) or
             (error is not None and (not isinstance(error, str) or error not in {
-                'timeout', 'unavailable', 'invalid_response', 'expired', 'prompt_too_large'}))):
+                'timeout', 'unavailable', 'invalid_response', 'expired', 'prompt_too_large',
+                'internal_error'})):
         return None
     if error is None and (not text.strip() or completed >= inference_deadline):
         return None

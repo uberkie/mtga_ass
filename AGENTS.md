@@ -58,8 +58,12 @@ This file was created because no root `AGENTS.md` existed. No earlier instructio
 - Keep the working-match milestone first. After state-to-model-to-overlay behavior is established, continue migrating the approved deck, draft, review, opponent, voice, and data capabilities into the overlay.
 - **Not Applicable from 2026-10-18 19:04:46 SAST:** The confidence-only condition for running tests is superseded by the user's success-guarantee condition below. The change is necessary because the user explicitly distinguished confidence from guaranteed test success. Do not claim verification that was not performed.
 
-## 2026-10-18 19:04:46 SAST — User clarification: guaranteed test success
+## 2026-10-18 19:04:46 SAST — User clarification: guaranteed test success (**Not Applicable from 2026-10-19 00:35:55 SAST**)
 
-- The user directed: “i said no tests unless you can garuntee success.”
-- Do not add or run tests unless success can be guaranteed. Confidence alone does not satisfy this condition.
-- When this condition is not met, continue source inspection and inspection of existing runtime evidence without running tests. Do not describe the older blanket ban or confidence-only rule as the current test-running condition.
+- **Not Applicable:** Superseded by the user's 2026-10-19 00:35:55 SAST direction that tests may run only when 100% confident and that work must stop with an explicit lack-of-confidence report otherwise.
+
+## 2026-10-19 00:35:55 SAST — User continuation and confidence condition
+
+- Continue toward the full read-only, local MTGA assistant scope, with the game overlay as the primary UI. Preserve privacy, explicit uncertainty and no Arena input automation.
+- Only run tests when 100% confident the code is correct. If that confidence is absent, stop work and tell the user there is no confidence in the work; do not continue source-only implementation as a substitute.
+- This instruction supersedes the 2026-10-18 19:04:46 SAST direction to continue source inspection when tests are not authorized. The change follows the user's newer explicit condition.

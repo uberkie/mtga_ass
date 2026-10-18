@@ -14,6 +14,7 @@ from mtga_assistant.desktop import (
     CommandInputError, CommandRunner, RunnerMessage, _validated_desktop_event,
     build_command, start_workflow,
 )
+from mtga_assistant.decks import FORMATS, SUGGESTION_GOALS
 from mtga_assistant.ollama import list_installed_models, list_loaded_models
 from mtga_assistant.paths import default_arena_log
 from mtga_assistant.preferences import load_match_model, save_match_model
@@ -147,6 +148,11 @@ class OverlayWindow:
     POLL_MS = 80
     WINDOW_POLL_SECONDS = 0.45
     STALE_SECONDS = 120.0
+    PANEL_OUTPUT_LIMIT = 64 * 1024
+    PANEL_WORKFLOWS = frozenset({
+        'deck-audit', 'deck-suggest', 'review', 'draft-rank', 'draft-stats-import',
+    })
+    DRAFT_WORKFLOWS = frozenset({'draft-rank', 'draft-stats-import'})
 
     def __init__(self, root, tk, ttk, filedialog):
         self.root = root
@@ -175,6 +181,11 @@ class OverlayWindow:
         self._window_state: ArenaWindowState | None = None
         self._drag_origin: tuple[int, int, int, int] | None = None
         self._manual_offset: tuple[int, int] | None = None
+        self._panel_output = ''
+        self._panel_output_prefix = ''
+        self._panel_output_suffix = ''
+        self._panel_output_truncated = False
+        self._panel_output_widget = None
 
         self.status_var = tk.StringVar(master=root, value='Waiting for Arena')
         self.model_status_var = tk.StringVar(master=root, value='Checking local model list…')
@@ -187,6 +198,25 @@ class OverlayWindow:
             master=root,
             value='Recommendations are unverified. Opponent hidden cards remain unknown.',
         )
+        self.deck_list_var = tk.StringVar(master=root)
+        self.cards_db_var = tk.StringVar(master=root)
+        self.collection_var = tk.StringVar(master=root)
+        self.deck_format_var = tk.StringVar(master=root, value='standard')
+        self.deck_goal_var = tk.StringVar(master=root, value='curve')
+        self.deck_status_var = tk.StringVar(master=root, value='Choose local files to begin.')
+        self.review_log_var = tk.StringVar(master=root)
+        self.review_seat_var = tk.StringVar(master=root, value='1')
+        self.review_cards_db_var = tk.StringVar(master=root)
+        self.review_use_model_var = tk.BooleanVar(master=root, value=False)
+        self.review_status_var = tk.StringVar(master=root, value='Choose a log and confirm your seat.')
+        self.draft_state_var = tk.StringVar(master=root)
+        self.draft_cards_db_var = tk.StringVar(master=root)
+        self.draft_stats_db_var = tk.StringVar(master=root)
+        self.draft_stats_source_var = tk.StringVar(master=root)
+        self.draft_stats_destination_var = tk.StringVar(master=root)
+        self.draft_set_code_var = tk.StringVar(master=root)
+        self.draft_event_type_var = tk.StringVar(master=root)
+        self.draft_status_var = tk.StringVar(master=root, value='Use an explicit pack/pool file or import local statistics.')
 
         self._build_widgets()
         self._configure_native_window()
@@ -230,7 +260,7 @@ class OverlayWindow:
         self.close_button = self.ttk.Button(self.header, text='×', width=3, command=self.close)
         self.close_button.pack(side='right', padx=(4, 0))
         self.stop_button = self.ttk.Button(
-            self.header, text='STOP', width=6, command=self.stop_watch, state='disabled',
+            self.header, text='STOP', width=6, command=self.stop_active_workflow, state='disabled',
         )
         self.stop_button.pack(side='right', padx=(4, 0))
         self.status_label = self.ttk.Label(
@@ -241,85 +271,571 @@ class OverlayWindow:
 
         self.body = self.ttk.Frame(self.root, padding=(12, 8, 12, 12), style='Overlay.TFrame')
         self.body.pack(fill='both', expand=True)
-        self.body.columnconfigure(1, weight=1)
+        self.page_nav = self.ttk.Frame(self.body, style='Overlay.TFrame')
+        self.page_nav.pack(fill='x', pady=(0, 5))
+        self.match_page_button = self.ttk.Button(
+            self.page_nav, text='MATCH', command=lambda: self._show_page('match'),
+        )
+        self.match_page_button.pack(side='left', padx=(0, 5))
+        self.deck_page_button = self.ttk.Button(
+            self.page_nav, text='DECK', command=lambda: self._show_page('deck'),
+        )
+        self.deck_page_button.pack(side='left')
+        self.review_page_button = self.ttk.Button(
+            self.page_nav, text='REVIEW', command=lambda: self._show_page('review'),
+        )
+        self.review_page_button.pack(side='left', padx=(5, 0))
+        self.draft_page_button = self.ttk.Button(
+            self.page_nav, text='DRAFT', command=lambda: self._show_page('draft'),
+        )
+        self.draft_page_button.pack(side='left', padx=(5, 0))
+        self.page_container = self.ttk.Frame(self.body, style='Overlay.TFrame')
+        self.page_container.pack(fill='both', expand=True)
+        self.page_container.columnconfigure(0, weight=1)
+        self.page_container.rowconfigure(0, weight=1)
+        self.match_page = self.ttk.Frame(self.page_container, style='Overlay.TFrame')
+        self.deck_page = self.ttk.Frame(self.page_container, style='Overlay.TFrame')
+        self.review_page = self.ttk.Frame(self.page_container, style='Overlay.TFrame')
+        self.draft_page = self.ttk.Frame(self.page_container, style='Overlay.TFrame')
+        self._show_page('match')
+        self.match_page.columnconfigure(1, weight=1)
 
-        self.ttk.Label(self.body, text='LOCAL MODEL', style='OverlayMuted.TLabel').grid(
+        self.ttk.Label(self.match_page, text='LOCAL MODEL', style='OverlayMuted.TLabel').grid(
             row=0, column=0, sticky='w', padx=(0, 8), pady=3,
         )
         self.model_picker = self.ttk.Combobox(
-            self.body, textvariable=self.model_var, state='readonly', width=32,
+            self.match_page, textvariable=self.model_var, state='readonly', width=32,
         )
         self.model_picker.grid(row=0, column=1, sticky='ew', pady=3)
         self.model_picker.bind('<<ComboboxSelected>>', self._model_selection_changed)
         self.refresh_button = self.ttk.Button(
-            self.body, text='↻', width=3, command=self._refresh_models,
+            self.match_page, text='↻', width=3, command=self._refresh_models,
         )
         self.refresh_button.grid(row=0, column=2, sticky='e', padx=(5, 0), pady=3)
         self.model_status_label = self.ttk.Label(
-            self.body, textvariable=self.model_status_var, style='OverlayMuted.TLabel',
+            self.match_page, textvariable=self.model_status_var, style='OverlayMuted.TLabel',
         )
         self.model_status_label.grid(row=1, column=0, columnspan=3, sticky='w', pady=(0, 7))
 
-        self.ttk.Label(self.body, text='PLAYER.LOG', style='OverlayMuted.TLabel').grid(
+        self.ttk.Label(self.match_page, text='PLAYER.LOG', style='OverlayMuted.TLabel').grid(
             row=2, column=0, sticky='w', padx=(0, 8), pady=3,
         )
-        self.log_entry = self.ttk.Entry(self.body, textvariable=self.log_var, width=32)
+        self.log_entry = self.ttk.Entry(self.match_page, textvariable=self.log_var, width=32)
         self.log_entry.grid(row=2, column=1, sticky='ew', pady=3)
         self.browse_button = self.ttk.Button(
-            self.body, text='…', width=3, command=self._browse_log,
+            self.match_page, text='…', width=3, command=self._browse_log,
         )
         self.browse_button.grid(row=2, column=2, sticky='e', padx=(5, 0), pady=3)
 
-        self.ttk.Label(self.body, text='YOUR SEAT', style='OverlayMuted.TLabel').grid(
+        self.ttk.Label(self.match_page, text='YOUR SEAT', style='OverlayMuted.TLabel').grid(
             row=3, column=0, sticky='w', padx=(0, 8), pady=3,
         )
         self.seat_picker = self.ttk.Combobox(
-            self.body, textvariable=self.seat_var, state='readonly',
+            self.match_page, textvariable=self.seat_var, state='readonly',
             values=('Auto-detect', '1', '2'), width=32,
         )
         self.seat_picker.grid(row=3, column=1, sticky='ew', pady=3)
         self.start_button = self.ttk.Button(
-            self.body, text='START WATCH', style='Overlay.TButton', command=self.start_watch,
+            self.match_page, text='START WATCH', style='Overlay.TButton', command=self.start_watch,
         )
         self.start_button.grid(row=4, column=0, columnspan=3, sticky='ew', pady=(7, 10))
 
-        self.ttk.Separator(self.body).grid(row=5, column=0, columnspan=3, sticky='ew', pady=4)
-        self.ttk.Label(self.body, text='CURRENT MATCH', style='OverlayTitle.TLabel').grid(
+        self.ttk.Separator(self.match_page).grid(row=5, column=0, columnspan=3, sticky='ew', pady=4)
+        self.ttk.Label(self.match_page, text='CURRENT MATCH', style='OverlayTitle.TLabel').grid(
             row=6, column=0, columnspan=3, sticky='w', pady=(7, 4),
         )
         self.summary_label = self.ttk.Label(
-            self.body, textvariable=self.summary_var, style='Overlay.TLabel',
+            self.match_page, textvariable=self.summary_var, style='Overlay.TLabel',
             wraplength=390, justify='left',
         )
         self.summary_label.grid(row=7, column=0, columnspan=3, sticky='ew', pady=2)
         self.choice_label = self.ttk.Label(
-            self.body, textvariable=self.choice_var, style='OverlayMuted.TLabel',
+            self.match_page, textvariable=self.choice_var, style='OverlayMuted.TLabel',
             wraplength=390, justify='left',
         )
         self.choice_label.grid(row=8, column=0, columnspan=3, sticky='ew', pady=(3, 2))
         self.notes_text = self.tk.Text(
-            self.body, height=5, wrap='word', relief='flat', borderwidth=0,
+            self.match_page, height=5, wrap='word', relief='flat', borderwidth=0,
             bg='#131C2B', fg='#E7EAF1', insertbackground='#E7EAF1',
             font=('Segoe UI', 9), padx=8, pady=6, state='disabled',
         )
         self.notes_text.grid(row=9, column=0, columnspan=3, sticky='ew', pady=(4, 7))
-        self.ttk.Label(self.body, text='AI  ·  STRATEGY UNVERIFIED',
+        self.ttk.Label(self.match_page, text='AI  ·  STRATEGY UNVERIFIED',
                        style='OverlayTitle.TLabel').grid(
             row=10, column=0, columnspan=3, sticky='w', pady=(2, 4),
         )
         self.advice_label = self.ttk.Label(
-            self.body, textvariable=self.advice_var, style='Overlay.TLabel',
+            self.match_page, textvariable=self.advice_var, style='Overlay.TLabel',
             wraplength=390, justify='left',
         )
         self.advice_label.grid(row=11, column=0, columnspan=3, sticky='ew', pady=(0, 5))
         self.ttk.Label(
-            self.body,
+            self.match_page,
             text='Read-only. Arena choices are not independently rules-verified.',
             style='OverlayMuted.TLabel', wraplength=390,
         ).grid(row=12, column=0, columnspan=3, sticky='w', pady=(4, 0))
 
+        self._build_deck_page()
+        self._build_review_page()
+        self._build_draft_page()
+
         self.title_label.bind('<ButtonPress-1>', self._begin_drag)
         self.title_label.bind('<B1-Motion>', self._drag)
+
+    def _show_page(self, page: str) -> None:
+        selected = {
+            'deck': self.deck_page,
+            'review': self.review_page,
+            'draft': self.draft_page,
+        }.get(page, self.match_page)
+        for frame in (self.match_page, self.deck_page, self.review_page, self.draft_page):
+            if frame.winfo_manager() == 'grid':
+                frame.grid_remove()
+        selected.grid(row=0, column=0, sticky='nsew')
+        selected.tkraise()
+
+    def _build_deck_page(self) -> None:
+        page = self.deck_page
+        page.columnconfigure(1, weight=1)
+        self.ttk.Label(page, text='LOCAL DECK TOOLS', style='OverlayTitle.TLabel').grid(
+            row=0, column=0, columnspan=3, sticky='w', pady=(2, 8),
+        )
+        self.ttk.Label(page, text='DECK LIST', style='OverlayMuted.TLabel').grid(
+            row=1, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.ttk.Entry(page, textvariable=self.deck_list_var).grid(
+            row=1, column=1, sticky='ew', pady=3,
+        )
+        self.ttk.Button(page, text='…', width=3, command=self._browse_deck_list).grid(
+            row=1, column=2, sticky='e', padx=(5, 0), pady=3,
+        )
+        self.ttk.Label(page, text='CARD CATALOG', style='OverlayMuted.TLabel').grid(
+            row=2, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.ttk.Entry(page, textvariable=self.cards_db_var).grid(
+            row=2, column=1, sticky='ew', pady=3,
+        )
+        self.ttk.Button(page, text='…', width=3, command=self._browse_cards_db).grid(
+            row=2, column=2, sticky='e', padx=(5, 0), pady=3,
+        )
+        self.ttk.Label(page, text='FORMAT', style='OverlayMuted.TLabel').grid(
+            row=3, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.deck_format_picker = self.ttk.Combobox(
+            page, textvariable=self.deck_format_var, state='readonly',
+            values=tuple(sorted(FORMATS)),
+        )
+        self.deck_format_picker.grid(row=3, column=1, columnspan=2, sticky='ew', pady=3)
+        self.ttk.Label(page, text='COLLECTION', style='OverlayMuted.TLabel').grid(
+            row=4, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.ttk.Entry(page, textvariable=self.collection_var).grid(
+            row=4, column=1, sticky='ew', pady=3,
+        )
+        self.ttk.Button(page, text='…', width=3, command=self._browse_collection).grid(
+            row=4, column=2, sticky='e', padx=(5, 0), pady=3,
+        )
+        self.ttk.Label(page, text='SUGGESTION', style='OverlayMuted.TLabel').grid(
+            row=5, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.deck_goal_picker = self.ttk.Combobox(
+            page, textvariable=self.deck_goal_var, state='readonly',
+            values=tuple(sorted(SUGGESTION_GOALS)),
+        )
+        self.deck_goal_picker.grid(row=5, column=1, columnspan=2, sticky='ew', pady=3)
+        self.deck_audit_button = self.ttk.Button(
+            page, text='AUDIT DECK', command=lambda: self._start_deck_workflow('deck-audit'),
+        )
+        self.deck_audit_button.grid(row=6, column=0, columnspan=3, sticky='ew', pady=(8, 3))
+        self.deck_suggest_button = self.ttk.Button(
+            page, text='SUGGEST CARDS', command=lambda: self._start_deck_workflow('deck-suggest'),
+        )
+        self.deck_suggest_button.grid(row=7, column=0, columnspan=3, sticky='ew', pady=3)
+        self.ttk.Label(page, textvariable=self.deck_status_var, style='OverlayMuted.TLabel',
+                       wraplength=390, justify='left').grid(
+            row=8, column=0, columnspan=3, sticky='ew', pady=(5, 3),
+        )
+        self.deck_output_text = self.tk.Text(
+            page, height=12, wrap='word', relief='flat', borderwidth=0,
+            bg='#131C2B', fg='#E7EAF1', insertbackground='#E7EAF1',
+            font=('Consolas', 8), padx=8, pady=6, state='disabled',
+        )
+        self.deck_output_text.grid(row=9, column=0, columnspan=3, sticky='nsew', pady=(3, 0))
+        page.rowconfigure(9, weight=1)
+
+    def _build_review_page(self) -> None:
+        page = self.review_page
+        page.columnconfigure(1, weight=1)
+        self.ttk.Label(page, text='POST-GAME REVIEW', style='OverlayTitle.TLabel').grid(
+            row=0, column=0, columnspan=3, sticky='w', pady=(2, 8),
+        )
+        self.ttk.Label(page, text='ARENA LOG', style='OverlayMuted.TLabel').grid(
+            row=1, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.ttk.Entry(page, textvariable=self.review_log_var).grid(
+            row=1, column=1, sticky='ew', pady=3,
+        )
+        self.ttk.Button(page, text='…', width=3, command=self._browse_review_log).grid(
+            row=1, column=2, sticky='e', padx=(5, 0), pady=3,
+        )
+        self.ttk.Label(page, text='YOUR SEAT', style='OverlayMuted.TLabel').grid(
+            row=2, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.review_seat_picker = self.ttk.Combobox(
+            page, textvariable=self.review_seat_var, state='readonly', values=('1', '2'),
+        )
+        self.review_seat_picker.grid(row=2, column=1, columnspan=2, sticky='ew', pady=3)
+        self.ttk.Label(page, text='CARD CATALOG', style='OverlayMuted.TLabel').grid(
+            row=3, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.ttk.Entry(page, textvariable=self.review_cards_db_var).grid(
+            row=3, column=1, sticky='ew', pady=3,
+        )
+        self.ttk.Button(page, text='…', width=3, command=self._browse_review_cards_db).grid(
+            row=3, column=2, sticky='e', padx=(5, 0), pady=3,
+        )
+        self.review_model_check = self.ttk.Checkbutton(
+            page, text='Include local model reflection (unverified)',
+            variable=self.review_use_model_var,
+        )
+        self.review_model_check.grid(row=4, column=0, columnspan=3, sticky='w', pady=(5, 3))
+        self.review_run_button = self.ttk.Button(
+            page, text='BUILD REVIEW', command=lambda: self._start_panel_workflow('review'),
+        )
+        self.review_run_button.grid(row=5, column=0, columnspan=3, sticky='ew', pady=(7, 3))
+        self.ttk.Label(page, textvariable=self.review_status_var, style='OverlayMuted.TLabel',
+                       wraplength=390, justify='left').grid(
+            row=6, column=0, columnspan=3, sticky='ew', pady=(5, 3),
+        )
+        self.review_output_text = self.tk.Text(
+            page, height=12, wrap='word', relief='flat', borderwidth=0,
+            bg='#131C2B', fg='#E7EAF1', insertbackground='#E7EAF1',
+            font=('Consolas', 8), padx=8, pady=6, state='disabled',
+        )
+        self.review_output_text.grid(row=7, column=0, columnspan=3, sticky='nsew', pady=(3, 0))
+        page.rowconfigure(7, weight=1)
+
+    def _build_draft_page(self) -> None:
+        page = self.draft_page
+        page.columnconfigure(1, weight=1)
+        self.ttk.Label(page, text='OFFLINE DRAFT TOOLS', style='OverlayTitle.TLabel').grid(
+            row=0, column=0, columnspan=3, sticky='w', pady=(2, 8),
+        )
+        self.ttk.Label(page, text='PACK / POOL JSON', style='OverlayMuted.TLabel').grid(
+            row=1, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.ttk.Entry(page, textvariable=self.draft_state_var).grid(
+            row=1, column=1, sticky='ew', pady=3,
+        )
+        self.ttk.Button(page, text='…', width=3, command=self._browse_draft_state).grid(
+            row=1, column=2, sticky='e', padx=(5, 0), pady=3,
+        )
+        self.ttk.Label(page, text='CARD CATALOG', style='OverlayMuted.TLabel').grid(
+            row=2, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.ttk.Entry(page, textvariable=self.draft_cards_db_var).grid(
+            row=2, column=1, sticky='ew', pady=3,
+        )
+        self.ttk.Button(page, text='…', width=3, command=self._browse_draft_cards_db).grid(
+            row=2, column=2, sticky='e', padx=(5, 0), pady=3,
+        )
+        self.ttk.Label(page, text='PICK STATS DB', style='OverlayMuted.TLabel').grid(
+            row=3, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.ttk.Entry(page, textvariable=self.draft_stats_db_var).grid(
+            row=3, column=1, sticky='ew', pady=3,
+        )
+        self.ttk.Button(page, text='…', width=3, command=self._browse_draft_stats_db).grid(
+            row=3, column=2, sticky='e', padx=(5, 0), pady=3,
+        )
+        self.draft_rank_button = self.ttk.Button(
+            page, text='RANK CURRENT PACK', command=lambda: self._start_panel_workflow('draft-rank'),
+        )
+        self.draft_rank_button.grid(row=4, column=0, columnspan=3, sticky='ew', pady=(6, 10))
+        self.ttk.Separator(page).grid(row=5, column=0, columnspan=3, sticky='ew', pady=4)
+        self.ttk.Label(page, text='IMPORT USER-SUPPLIED 17LANDS CSV',
+                       style='OverlayTitle.TLabel').grid(
+            row=6, column=0, columnspan=3, sticky='w', pady=(5, 4),
+        )
+        self.ttk.Label(page, text='CSV / GZIP CSV', style='OverlayMuted.TLabel').grid(
+            row=7, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.ttk.Entry(page, textvariable=self.draft_stats_source_var).grid(
+            row=7, column=1, sticky='ew', pady=3,
+        )
+        self.ttk.Button(page, text='…', width=3, command=self._browse_draft_stats_source).grid(
+            row=7, column=2, sticky='e', padx=(5, 0), pady=3,
+        )
+        self.ttk.Label(page, text='SAVE STATS DB', style='OverlayMuted.TLabel').grid(
+            row=8, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.ttk.Entry(page, textvariable=self.draft_stats_destination_var).grid(
+            row=8, column=1, sticky='ew', pady=3,
+        )
+        self.ttk.Button(page, text='…', width=3, command=self._browse_draft_stats_destination).grid(
+            row=8, column=2, sticky='e', padx=(5, 0), pady=3,
+        )
+        self.ttk.Label(page, text='SET CODE', style='OverlayMuted.TLabel').grid(
+            row=9, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.ttk.Entry(page, textvariable=self.draft_set_code_var).grid(
+            row=9, column=1, columnspan=2, sticky='ew', pady=3,
+        )
+        self.ttk.Label(page, text='EVENT TYPE', style='OverlayMuted.TLabel').grid(
+            row=10, column=0, sticky='w', padx=(0, 7), pady=3,
+        )
+        self.ttk.Entry(page, textvariable=self.draft_event_type_var).grid(
+            row=10, column=1, columnspan=2, sticky='ew', pady=3,
+        )
+        self.draft_import_button = self.ttk.Button(
+            page, text='IMPORT DRAFT STATISTICS',
+            command=lambda: self._start_panel_workflow('draft-stats-import'),
+        )
+        self.draft_import_button.grid(row=11, column=0, columnspan=3, sticky='ew', pady=(6, 3))
+        self.ttk.Label(page, textvariable=self.draft_status_var, style='OverlayMuted.TLabel',
+                       wraplength=390, justify='left').grid(
+            row=12, column=0, columnspan=3, sticky='ew', pady=(4, 3),
+        )
+        self.draft_output_text = self.tk.Text(
+            page, height=7, wrap='word', relief='flat', borderwidth=0,
+            bg='#131C2B', fg='#E7EAF1', insertbackground='#E7EAF1',
+            font=('Consolas', 8), padx=8, pady=6, state='disabled',
+        )
+        self.draft_output_text.grid(row=13, column=0, columnspan=3, sticky='nsew', pady=(3, 0))
+        page.rowconfigure(13, weight=1)
+
+    def _browse_draft_state(self) -> None:
+        selected = self.filedialog.askopenfilename(
+            title='Choose a local draft pack/pool snapshot',
+            filetypes=(('JSON files', '*.json'), ('All files', '*.*')),
+        )
+        if selected:
+            self.draft_state_var.set(selected)
+
+    def _browse_draft_cards_db(self) -> None:
+        selected = self.filedialog.askopenfilename(
+            title='Choose the local card catalog',
+            filetypes=(('SQLite databases', ('*.sqlite3', '*.sqlite', '*.db')), ('All files', '*.*')),
+        )
+        if selected:
+            self.draft_cards_db_var.set(selected)
+
+    def _browse_draft_stats_db(self) -> None:
+        selected = self.filedialog.askopenfilename(
+            title='Choose optional draft pick statistics',
+            filetypes=(('SQLite databases', ('*.sqlite3', '*.sqlite', '*.db')), ('All files', '*.*')),
+        )
+        if selected:
+            self.draft_stats_db_var.set(selected)
+
+    def _browse_draft_stats_source(self) -> None:
+        selected = self.filedialog.askopenfilename(
+            title='Choose user-obtained 17Lands draft statistics',
+            filetypes=(('CSV files', ('*.csv', '*.csv.gz')), ('All files', '*.*')),
+        )
+        if selected:
+            self.draft_stats_source_var.set(selected)
+
+    def _browse_draft_stats_destination(self) -> None:
+        selected = self.filedialog.asksaveasfilename(
+            title='Save local draft statistics database',
+            defaultextension='.sqlite3', confirmoverwrite=True,
+            filetypes=(('SQLite databases', '*.sqlite3'), ('All files', '*.*')),
+        )
+        if selected:
+            self.draft_stats_destination_var.set(selected)
+
+    def _browse_review_log(self) -> None:
+        selected = self.filedialog.askopenfilename(
+            title='Choose an Arena log for post-game review',
+            filetypes=(('Arena logs', ('Player.log', '*.log')), ('All files', '*.*')),
+        )
+        if selected:
+            self.review_log_var.set(selected)
+
+    def _browse_review_cards_db(self) -> None:
+        selected = self.filedialog.askopenfilename(
+            title='Choose the local card catalog',
+            filetypes=(('SQLite databases', ('*.sqlite3', '*.sqlite', '*.db')), ('All files', '*.*')),
+        )
+        if selected:
+            self.review_cards_db_var.set(selected)
+
+    def _browse_deck_list(self) -> None:
+        selected = self.filedialog.askopenfilename(
+            title='Choose a local deck list',
+            filetypes=(('Deck lists', ('*.txt', '*.dek')), ('All files', '*.*')),
+        )
+        if selected:
+            self.deck_list_var.set(selected)
+
+    def _browse_cards_db(self) -> None:
+        selected = self.filedialog.askopenfilename(
+            title='Choose the local card catalog',
+            filetypes=(('SQLite databases', ('*.sqlite3', '*.sqlite', '*.db')), ('All files', '*.*')),
+        )
+        if selected:
+            self.cards_db_var.set(selected)
+
+    def _browse_collection(self) -> None:
+        selected = self.filedialog.askopenfilename(
+            title='Choose an optional local collection',
+            filetypes=(('JSON files', '*.json'), ('All files', '*.*')),
+        )
+        if selected:
+            self.collection_var.set(selected)
+
+    def _deck_values(self) -> dict[str, str]:
+        return {
+            'deck_list': self.deck_list_var.get(),
+            'cards_db': self.cards_db_var.get(),
+            'collection_json': self.collection_var.get(),
+            'format': self.deck_format_var.get(),
+            'goal': self.deck_goal_var.get(),
+        }
+
+    def _start_deck_workflow(self, workflow: str) -> None:
+        self._start_panel_workflow(workflow)
+
+    def _start_panel_workflow(self, workflow: str) -> None:
+        if self._closing:
+            return
+        if self.runner.active or self._active_workflow is not None:
+            status = (self.review_status_var if workflow == 'review' else
+                      self.draft_status_var if workflow in self.DRAFT_WORKFLOWS else
+                      self.deck_status_var)
+            status.set('Stop the active workflow before starting another task.')
+            return
+        if workflow == 'review':
+            use_model = self.review_use_model_var.get()
+            selected_model = self.model_var.get().strip()
+            values = {
+                'log': self.review_log_var.get(),
+                'seat': self.review_seat_var.get(),
+                'cards_db': self.review_cards_db_var.get(),
+                'model': selected_model if use_model else '',
+            }
+            if use_model and (not selected_model or selected_model not in self._model_names):
+                self.review_status_var.set('Refresh the local model list and select an installed model on MATCH.')
+                return
+        elif workflow == 'draft-rank':
+            values = {
+                'state': self.draft_state_var.get(),
+                'cards_db': self.draft_cards_db_var.get(),
+                'stats_db': self.draft_stats_db_var.get(),
+            }
+        elif workflow == 'draft-stats-import':
+            values = {
+                'source': self.draft_stats_source_var.get(),
+                'database': self.draft_stats_destination_var.get(),
+                'set_code': self.draft_set_code_var.get(),
+                'event_type': self.draft_event_type_var.get(),
+            }
+        else:
+            values = self._deck_values()
+        try:
+            build_command(workflow, values)
+        except CommandInputError as exc:
+            status = (self.review_status_var if workflow == 'review' else
+                      self.draft_status_var if workflow in self.DRAFT_WORKFLOWS else
+                      self.deck_status_var)
+            status.set(str(exc))
+            return
+        self._panel_output = ''
+        self._panel_output_prefix = ''
+        self._panel_output_suffix = ''
+        self._panel_output_truncated = False
+        self._panel_output_widget = (
+            self.review_output_text if workflow == 'review' else
+            self.draft_output_text if workflow in self.DRAFT_WORKFLOWS else
+            self.deck_output_text
+        )
+        self._render_panel_output()
+        if workflow == 'review':
+            self.review_run_button.configure(state='disabled')
+            self.review_status_var.set('Building a local review from the selected log…')
+        elif workflow in self.DRAFT_WORKFLOWS:
+            self.draft_rank_button.configure(state='disabled')
+            self.draft_import_button.configure(state='disabled')
+            self.draft_status_var.set('Running a local draft task…')
+        else:
+            self.deck_audit_button.configure(state='disabled')
+            self.deck_suggest_button.configure(state='disabled')
+            self.deck_status_var.set('Running a local, read-only deck task…')
+        self.stop_button.configure(state='normal', text='CANCEL')
+        self._active_workflow = workflow
+        try:
+            start_workflow(workflow, values, self.runner)
+        except (CommandInputError, OSError, RuntimeError, ValueError):
+            self._active_workflow = None
+            if workflow == 'review':
+                self.review_run_button.configure(state='normal')
+                self.review_status_var.set('The local review could not be started.')
+            elif workflow in self.DRAFT_WORKFLOWS:
+                self.draft_rank_button.configure(state='normal')
+                self.draft_import_button.configure(state='normal')
+                self.draft_status_var.set('The local draft task could not be started.')
+            else:
+                self.deck_audit_button.configure(state='normal')
+                self.deck_suggest_button.configure(state='normal')
+                self.deck_status_var.set('The local deck task could not be started.')
+            self.stop_button.configure(state='disabled', text='STOP')
+
+    def _render_panel_output(self) -> None:
+        if self._panel_output_widget is None:
+            return
+        self._panel_output_widget.configure(state='normal')
+        self._panel_output_widget.delete('1.0', 'end')
+        self._panel_output_widget.insert('1.0', self._panel_output)
+        self._panel_output_widget.configure(state='disabled')
+
+    def _append_panel_output(self, text: str) -> None:
+        marker = '\n[Later output omitted to keep the overlay display bounded.]\n'
+        marker_bytes = len(marker.encode('utf-8'))
+        if not self._panel_output_truncated:
+            combined = self._panel_output + text
+            encoded = combined.encode('utf-8', errors='replace')
+            if len(encoded) <= self.PANEL_OUTPUT_LIMIT:
+                self._panel_output = combined
+            else:
+                self._panel_output_truncated = True
+                prefix_limit = (self.PANEL_OUTPUT_LIMIT - marker_bytes) // 2
+                suffix_limit = self.PANEL_OUTPUT_LIMIT - marker_bytes - prefix_limit
+                self._panel_output_prefix = encoded[:prefix_limit].decode('utf-8', errors='ignore')
+                self._panel_output_suffix = encoded[-suffix_limit:].decode('utf-8', errors='ignore')
+                self._panel_output = (self._panel_output_prefix + marker +
+                                      self._panel_output_suffix)
+        else:
+            self._panel_output_suffix += text
+            suffix_limit = (self.PANEL_OUTPUT_LIMIT - marker_bytes -
+                            len(self._panel_output_prefix.encode('utf-8')))
+            suffix = self._panel_output_suffix.encode('utf-8', errors='replace')
+            if len(suffix) > suffix_limit:
+                self._panel_output_suffix = suffix[-suffix_limit:].decode('utf-8', errors='ignore')
+            self._panel_output = (self._panel_output_prefix + marker +
+                                  self._panel_output_suffix)
+        self._render_panel_output()
+
+    def stop_active_workflow(self) -> None:
+        workflow = self._active_workflow
+        if workflow in self.PANEL_WORKFLOWS:
+            if self.runner.active:
+                self.runner.stop(timeout_seconds=2.0)
+            self._active_workflow = None
+            if workflow == 'review':
+                self.review_run_button.configure(state='normal')
+                self.review_status_var.set('Review cancelled.')
+            elif workflow in self.DRAFT_WORKFLOWS:
+                self.draft_rank_button.configure(state='normal')
+                self.draft_import_button.configure(state='normal')
+                self.draft_status_var.set('Draft task cancelled.')
+            else:
+                self.deck_audit_button.configure(state='normal')
+                self.deck_suggest_button.configure(state='normal')
+                self.deck_status_var.set('Deck task cancelled.')
+            self.stop_button.configure(state='disabled', text='STOP')
+            return
+        self.stop_watch()
 
     def _configure_native_window(self) -> None:
         self.root.update_idletasks()
@@ -407,6 +923,11 @@ class OverlayWindow:
                 'model-warm': 'Arena active · warming model',
                 'watch': 'Arena active · Watch running',
                 'model-unload': 'Arena active · releasing model',
+                'deck-audit': 'Arena active · auditing deck',
+                'deck-suggest': 'Arena active · building suggestions',
+                'review': 'Arena active · building review',
+                'draft-rank': 'Arena active · ranking draft pack',
+                'draft-stats-import': 'Arena active · importing draft stats',
             }.get(self._active_workflow, 'Arena active · Watch stopped')
             self.status_var.set(activity)
         else:
@@ -594,7 +1115,7 @@ class OverlayWindow:
             self.runner.stop(timeout_seconds=2.0)
         self._active_workflow = None
         self.start_button.configure(state='normal')
-        self.stop_button.configure(state='disabled')
+        self.stop_button.configure(state='disabled', text='STOP')
         if self._begin_model_release():
             self.status_var.set('Watch stopped; releasing local model…')
         else:
@@ -693,10 +1214,18 @@ class OverlayWindow:
         if event['type'] != 'decision_result' or event['revision'] != self._latest_revision:
             return
         if time.monotonic() >= event['deadline_at']:
+            self.model_status_var.set('The last model response missed its deadline.')
             self.advice_var.set('Response expired; check the current Arena state.')
         elif event['error_code']:
-            if event['error_code'] == 'timeout':
-                self.model_status_var.set('The last model response missed its deadline.')
+            model_status = {
+                'timeout': 'The last model response missed its deadline.',
+                'expired': 'The last model response arrived too late to display.',
+                'unavailable': 'Ollama was unavailable for the last request.',
+                'invalid_response': 'The last Ollama response was invalid.',
+                'prompt_too_large': 'The last model request exceeded its size limit.',
+                'internal_error': 'The last model request failed internally; Watch remains active.',
+            }.get(event['error_code'], 'The last model request failed.')
+            self.model_status_var.set(model_status)
             self.advice_var.set(
                 f"AI {event['error_code'].replace('_', ' ')} ({event['elapsed_ms']} ms). "
                 'Deterministic observations remain available.'
@@ -734,13 +1263,37 @@ class OverlayWindow:
         if workflow == 'watch':
             self._active_workflow = None
             self.start_button.configure(state='normal')
-            self.stop_button.configure(state='disabled')
+            self.stop_button.configure(state='disabled', text='STOP')
             if exit_code == 0:
                 self.status_var.set('Watch stopped.')
             else:
                 self.status_var.set('Watch ended; check Arena and the local log connection.')
             if self._active_model and not self._closing:
                 self._begin_model_release()
+            return
+        if workflow in self.PANEL_WORKFLOWS:
+            self._active_workflow = None
+            if workflow == 'review':
+                self.review_run_button.configure(state='normal')
+                self.review_status_var.set(
+                    'Review finished.' if exit_code == 0 else
+                    'Review failed; check the selected log and local output.'
+                )
+            elif workflow in self.DRAFT_WORKFLOWS:
+                self.draft_rank_button.configure(state='normal')
+                self.draft_import_button.configure(state='normal')
+                self.draft_status_var.set(
+                    'Draft task finished.' if exit_code == 0 else
+                    'Draft task failed; review the local output and inputs.'
+                )
+            else:
+                self.deck_audit_button.configure(state='normal')
+                self.deck_suggest_button.configure(state='normal')
+                if exit_code == 0:
+                    self.deck_status_var.set('Deck task finished.')
+                else:
+                    self.deck_status_var.set('Deck task failed; review the local output above.')
+            self.stop_button.configure(state='disabled', text='STOP')
             return
         if workflow == 'model-unload':
             self._active_workflow = None
@@ -755,6 +1308,12 @@ class OverlayWindow:
             self.root.after(0, self.root.destroy)
 
     def _process_message(self, message: RunnerMessage) -> None:
+        if message.kind == 'output' and self._active_workflow in self.PANEL_WORKFLOWS:
+            self._append_panel_output(message.text)
+            return
+        if message.kind == 'truncated' and self._active_workflow in self.PANEL_WORKFLOWS:
+            self._append_panel_output('\n[Some process output was dropped to keep the queue bounded.]\n')
+            return
         if message.kind == 'ui_event':
             try:
                 event = _validated_desktop_event(message.text)
@@ -763,8 +1322,23 @@ class OverlayWindow:
             if event is not None:
                 self._apply_event(event)
         elif message.kind == 'error':
-            self.status_var.set('The local Watch/preload operation could not start.')
             workflow = self._active_workflow
+            if workflow in self.PANEL_WORKFLOWS:
+                self._active_workflow = None
+                if workflow == 'review':
+                    self.review_run_button.configure(state='normal')
+                    self.review_status_var.set('The local review could not be run or its output could not be read.')
+                elif workflow in self.DRAFT_WORKFLOWS:
+                    self.draft_rank_button.configure(state='normal')
+                    self.draft_import_button.configure(state='normal')
+                    self.draft_status_var.set('The local draft task could not be run or its output could not be read.')
+                else:
+                    self.deck_audit_button.configure(state='normal')
+                    self.deck_suggest_button.configure(state='normal')
+                    self.deck_status_var.set('The local deck task could not be run or its output could not be read.')
+                self.stop_button.configure(state='disabled', text='STOP')
+                return
+            self.status_var.set('The local Watch/preload operation could not start.')
             self._active_workflow = None
             self._pending_watch_values = None
             self.start_button.configure(state='normal')

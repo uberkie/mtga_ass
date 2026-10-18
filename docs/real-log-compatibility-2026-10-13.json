@@ -1,0 +1,221 @@
+{
+  "checked_date": "2026-10-13",
+  "reports": [
+    {
+      "source_file": "Player.log",
+      "source_bytes": 3691217,
+      "source_sha256": "5303d3b9f27effafbbdddd91d5849e15d03a3363647a0b372c239f1d4840f169",
+      "source_modified_local": "2026-10-13T14:04:12.544934+02:00",
+      "source_stable_during_read": true,
+      "observed_match_boundaries": 1,
+      "observed_state_messages": 370,
+      "final_life_totals_by_seat": {
+        "1": -1,
+        "2": 12
+      },
+      "seat_reports": [
+        {
+          "fixture_provenance": "user_log_unverified",
+          "independent_validation": "pending",
+          "events": 622,
+          "applied_updates": 370,
+          "resets": 0,
+          "diagnostics": {
+            "unresolved_instance_remap": 1
+          },
+          "supported_messages": {
+            "GREMessageType_ConnectResp": 1,
+            "GREMessageType_GameStateMessage": 368,
+            "GREMessageType_QueuedGameStateMessage": 2
+          },
+          "limitations_seen": [
+            "missing_turn",
+            "unknown_zone_membership",
+            "unresolved_instance_remap"
+          ],
+          "final_integrity": {
+            "status": "uncertain",
+            "limitations": [
+              "unresolved_instance_remap"
+            ]
+          }
+        },
+        {
+          "fixture_provenance": "user_log_unverified",
+          "independent_validation": "pending",
+          "events": 622,
+          "applied_updates": 370,
+          "resets": 0,
+          "diagnostics": {
+            "unresolved_instance_remap": 1
+          },
+          "supported_messages": {
+            "GREMessageType_ConnectResp": 1,
+            "GREMessageType_GameStateMessage": 368,
+            "GREMessageType_QueuedGameStateMessage": 2
+          },
+          "limitations_seen": [
+            "missing_turn",
+            "missing_visible_objects",
+            "unknown_zone_membership",
+            "unresolved_instance_remap"
+          ],
+          "final_integrity": {
+            "status": "uncertain",
+            "limitations": [
+              "unresolved_instance_remap"
+            ]
+          }
+        }
+      ],
+      "final_state_markers_by_seat": [
+        {
+          "game_stage": "GameStage_GameOver",
+          "match_status": "MatchState_MatchComplete",
+          "integrity": {
+            "status": "uncertain",
+            "limitations": [
+              "unresolved_instance_remap"
+            ]
+          }
+        },
+        {
+          "game_stage": "GameStage_GameOver",
+          "match_status": "MatchState_MatchComplete",
+          "integrity": {
+            "status": "uncertain",
+            "limitations": [
+              "unresolved_instance_remap"
+            ]
+          }
+        }
+      ],
+      "integrity_status_after_applied_batches": [
+        {
+          "partial": 65,
+          "uncertain": 25
+        },
+        {
+          "partial": 65,
+          "uncertain": 25
+        }
+      ],
+      "visible_own_hand_card_observations": [
+        289,
+        0
+      ],
+      "hidden_zone_assertions_passed": 540,
+      "source_gap_summary": [],
+      "independent_match_accuracy": "pending",
+      "current_client_match_compatibility": "pending"
+    },
+    {
+      "source_file": "Player-prev.log",
+      "source_bytes": 4827868,
+      "source_sha256": "fdbd0878756f58a5553068fbc4b67160906866614b541c7aaa5fddc34f867ae4",
+      "source_modified_local": "2026-10-13T06:56:01.290176+02:00",
+      "source_stable_during_read": true,
+      "observed_match_boundaries": 1,
+      "observed_state_messages": 334,
+      "final_life_totals_by_seat": {
+        "1": 13,
+        "2": 20
+      },
+      "seat_reports": [
+        {
+          "fixture_provenance": "user_log_unverified",
+          "independent_validation": "pending",
+          "events": 642,
+          "applied_updates": 334,
+          "resets": 0,
+          "diagnostics": {
+            "unresolved_instance_remap": 2
+          },
+          "supported_messages": {
+            "GREMessageType_ConnectResp": 1,
+            "GREMessageType_GameStateMessage": 330,
+            "GREMessageType_QueuedGameStateMessage": 4
+          },
+          "limitations_seen": [
+            "missing_turn",
+            "missing_visible_objects",
+            "unknown_zone_membership",
+            "unresolved_instance_remap"
+          ],
+          "final_integrity": {
+            "status": "uncertain",
+            "limitations": [
+              "unresolved_instance_remap"
+            ]
+          }
+        },
+        {
+          "fixture_provenance": "user_log_unverified",
+          "independent_validation": "pending",
+          "events": 642,
+          "applied_updates": 334,
+          "resets": 0,
+          "diagnostics": {
+            "unresolved_instance_remap": 2
+          },
+          "supported_messages": {
+            "GREMessageType_ConnectResp": 1,
+            "GREMessageType_GameStateMessage": 330,
+            "GREMessageType_QueuedGameStateMessage": 4
+          },
+          "limitations_seen": [
+            "missing_turn",
+            "unknown_zone_membership",
+            "unresolved_instance_remap"
+          ],
+          "final_integrity": {
+            "status": "uncertain",
+            "limitations": [
+              "unresolved_instance_remap"
+            ]
+          }
+        }
+      ],
+      "final_state_markers_by_seat": [
+        {
+          "game_stage": "GameStage_GameOver",
+          "match_status": "MatchState_MatchComplete",
+          "integrity": {
+            "status": "uncertain",
+            "limitations": [
+              "unresolved_instance_remap"
+            ]
+          }
+        },
+        {
+          "game_stage": "GameStage_GameOver",
+          "match_status": "MatchState_MatchComplete",
+          "integrity": {
+            "status": "uncertain",
+            "limitations": [
+              "unresolved_instance_remap"
+            ]
+          }
+        }
+      ],
+      "integrity_status_after_applied_batches": [
+        {
+          "partial": 71,
+          "uncertain": 20
+        },
+        {
+          "partial": 71,
+          "uncertain": 20
+        }
+      ],
+      "visible_own_hand_card_observations": [
+        0,
+        176
+      ],
+      "hidden_zone_assertions_passed": 546,
+      "source_gap_summary": [],
+      "independent_match_accuracy": "pending",
+      "current_client_match_compatibility": "pending"
+    }
+  ]
+}
