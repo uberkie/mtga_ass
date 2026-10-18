@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import sys
 import time
+from typing import Any
 from urllib.error import URLError
 from mtga_assistant.cards import (
     CatalogError, import_catalog, load_card_names, lookup_card, lookup_cards,
@@ -51,6 +52,7 @@ from mtga_assistant.opponent import (
 
 _DESKTOP_EVENT_PREFIX = '@@MTGA_UI_EVENT@@'
 
+
 def default_path() -> Path:
     return default_arena_log()
 
@@ -58,6 +60,7 @@ def default_path() -> Path:
 class _ConfiguredNames:
     def __init__(self, names):
         self.names = names
+
     def name(self, gid):
         return self.names.get(gid)
 
@@ -68,8 +71,8 @@ def load_names(path: Path | None) -> dict[int, str]:
     with path.open('r', encoding='utf-8-sig') as fp:
         obj = json.load(fp)
     if not isinstance(obj, dict) or any(
-        not isinstance(k, str) or re.fullmatch(r'[1-9][0-9]*', k) is None or
-        not isinstance(v, str) or not v.strip() for k, v in obj.items()
+            not isinstance(k, str) or re.fullmatch(r'[1-9][0-9]*', k) is None or
+            not isinstance(v, str) or not v.strip() for k, v in obj.items()
     ):
         raise ValueError('Invalid card mapping')
     return {int(k): v.strip() for k, v in obj.items()}
@@ -277,7 +280,7 @@ def _decision_value_text(value: object, code: object = None) -> str | None:
             return json.dumps(value, ensure_ascii=False)
         return None
     if code == 'catalog_mana_value':
-        if (type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1_000):
+        if not (not (type(value) in (int, float)) or not math.isfinite(value)) and 0 <= value <= 1_000:
             return str(value)
         return None
     if code == 'catalog_colors':
@@ -311,7 +314,7 @@ def render_decision_analysis(analysis: dict) -> str:
     catalog_rendered = False
     status = analysis.get('status') if isinstance(analysis, dict) else None
     lines.append('  Status: ' + (status if isinstance(status, str) and
-                                 status in {'analyzed', 'partial', 'unavailable'} else 'unavailable'))
+                                           status in {'analyzed', 'partial', 'unavailable'} else 'unavailable'))
     choices = analysis.get('choices') if isinstance(analysis, dict) else None
     if isinstance(choices, list):
         for choice in choices[:64]:
@@ -350,7 +353,8 @@ def render_decision_analysis(analysis: dict) -> str:
             if safe:
                 lines.append('  Limitations: ' + ', '.join(safe))
     if catalog_rendered:
-        lines.insert(2, '  Local card text is reference-only and may be stale or incomplete; it does not prove legality or interactions.')
+        lines.insert(2,
+                     '  Local card text is reference-only and may be stale or incomplete; it does not prove legality or interactions.')
     return '\n'.join(lines) + '\n'
 
 
@@ -415,7 +419,8 @@ def render_decision_comparison(analysis: dict, comparison: dict, *, for_overlay:
         if isinstance(analysis, dict) and analysis.get('decision_kind') == 'actions':
             lines.append('  Check available mana before casting; listed actions may still need payment.')
     if catalog_rendered:
-        lines.insert(2, '  Local card text is reference-only and may be stale or incomplete; it does not prove legality or interactions.')
+        lines.insert(2,
+                     '  Local card text is reference-only and may be stale or incomplete; it does not prove legality or interactions.')
     return '\n'.join(lines) + '\n'
 
 
@@ -435,9 +440,11 @@ def emit_match_summary(args: argparse.Namespace, snapshot: dict, notes: list[dic
     if seat not in (1, 2):
         return
     lives = snapshot.get('life_totals') or {}
+
     def life(which):
         value = lives.get(str(which), lives.get(which)) if isinstance(lives, dict) else None
         return value if type(value) is int else None
+
     def count(zone_name, owner):
         zones = snapshot.get('zones', [])
         if not isinstance(zones, list):
@@ -454,6 +461,7 @@ def emit_match_summary(args: argparse.Namespace, snapshot: dict, notes: list[dic
         values = [z.get('count') for z in zones if isinstance(z, dict) and
                   z.get('zone') == zone_name and z.get('owner') == owner]
         return sum(values) if values and all(type(v) is int for v in values) else None
+
     choices = analysis.get('choices', []) if isinstance(analysis, dict) else []
     labels = [str(c.get('label', 'Unknown'))[:150]
               for c in choices[:12] if isinstance(c, dict)]
@@ -462,7 +470,7 @@ def emit_match_summary(args: argparse.Namespace, snapshot: dict, notes: list[dic
     # even when the card catalog is missing. Never send these IDs to the model.
     decision = snapshot.get('decision')
     arena_choice_present = (
-        isinstance(decision, dict) and decision.get('source') == 'arena_presented'
+            isinstance(decision, dict) and decision.get('source') == 'arena_presented'
     )
     if (isinstance(decision, dict) and decision.get('source') == 'arena_presented' and
             decision.get('kind') == 'blockers' and isinstance(decision.get('blockers'), list)):
@@ -483,7 +491,7 @@ def emit_match_summary(args: argparse.Namespace, snapshot: dict, notes: list[dic
         'opp_battlefield': count('Battlefield', 3 - seat),
         'arena_choice_present': arena_choice_present,
         'decision_kind': (str(analysis.get('decision_kind'))[:90] if isinstance(analysis, dict)
-                          and analysis.get('choices') else None),
+                                                                     and analysis.get('choices') else None),
         'choices': labels,
         'notes': [str(n.get('message', ''))[:220] for n in notes[:6] if isinstance(n, dict)],
     })
@@ -498,9 +506,11 @@ def emit(snapshot: dict, notes: list[dict], args: argparse.Namespace,
                           'decision_analysis': decision_analysis}, ensure_ascii=False), flush=True)
         return
     print('\n' + '=' * 58)
-    print(f"Turn {snapshot['turn_number'] if snapshot['turn_number'] is not None else '?'} | {snapshot['phase'] or '?'} / {snapshot['step'] or '?'}"
-          f" | Active seat: {snapshot['active_player'] or '?'}")
-    print(f"State: {snapshot['integrity']['status']} | Lifecycle: {snapshot.get('lifecycle', 'UNKNOWN')} | Life totals: {snapshot['life_totals']}")
+    print(
+        f"Turn {snapshot['turn_number'] if snapshot['turn_number'] is not None else '?'} | {snapshot['phase'] or '?'} / {snapshot['step'] or '?'}"
+        f" | Active seat: {snapshot['active_player'] or '?'}")
+    print(
+        f"State: {snapshot['integrity']['status']} | Lifecycle: {snapshot.get('lifecycle', 'UNKNOWN')} | Life totals: {snapshot['life_totals']}")
     if snapshot['integrity']['limitations']:
         print('State limitations: ' + ', '.join(snapshot['integrity']['limitations']))
     for zone in snapshot['zones']:
@@ -593,6 +603,7 @@ def emit_desktop_event(args: argparse.Namespace, event: dict) -> None:
 
 def release_watch_model(worker: ExplanationWorker | None, model: str, args: argparse.Namespace) -> bool:
     """Stop decision work before asking Ollama to release its resident model."""
+
     def announce(status: str) -> None:
         if args.json:
             print(json.dumps({'model_status': status}), flush=True)
@@ -711,7 +722,8 @@ def render_deck_report(report: dict, json_output: bool) -> str:
             'Cards:',
         ]
         for card in report['cards']:
-            printing = f" ({card['set']} {card['collector_number']})" if card['set'] and card['collector_number'] else ''
+            printing = f" ({card['set']} {card['collector_number']})" if card['set'] and card[
+                'collector_number'] else ''
             lines.append(f"  {card['main_count']} main / {card['sideboard_count']} sideboard — "
                          f"{card['name']}{printing} | {card['legality']}")
         if report['issues']:
@@ -758,7 +770,8 @@ def render_deck_suggestions(report: dict, json_output: bool) -> str:
         if not report['suggestions']:
             lines.append('  No candidates matched the selected catalog signals and collection.')
         for item in report['suggestions']:
-            printing = f" ({item['set']} {item['collector_number']})" if item['set'] and item['collector_number'] else ''
+            printing = f" ({item['set']} {item['collector_number']})" if item['set'] and item[
+                'collector_number'] else ''
             cmc = item['cmc'] if item['cmc'] is not None else 'unknown'
             colors = ','.join(item['colors']) or 'colorless'
             budget = item['collection']
@@ -766,8 +779,9 @@ def render_deck_suggestions(report: dict, json_output: bool) -> str:
                          f"mana value {cmc} | colors {colors} | {budget['status']}")
             lines.append('    Reasons: ' + ', '.join(item['reasons']))
             if budget['wildcard_needed']:
-                lines.append(f"    Wildcards: need {budget['wildcard_needed']} {budget['wildcard_rarity'] or 'unknown rarity'}, "
-                             f"have {budget['wildcard_available']}")
+                lines.append(
+                    f"    Wildcards: need {budget['wildcard_needed']} {budget['wildcard_rarity'] or 'unknown rarity'}, "
+                    f"have {budget['wildcard_available']}")
         lines.append('Limitations: ' + ' '.join(report['limitations']))
         rendered = '\n'.join(lines) + '\n'
     if len(rendered.encode('utf-8')) > MAX_DECK_REPORT_BYTES:
@@ -797,7 +811,8 @@ def render_draft_report(report: dict, json_output: bool) -> str:
         if not report['candidates']:
             lines.append('  No visible pack card could be resolved in the local catalog.')
         for card in report['candidates']:
-            printing = f" ({card['set']} {card['collector_number']})" if card['set'] and card['collector_number'] else ''
+            printing = f" ({card['set']} {card['collector_number']})" if card['set'] and card[
+                'collector_number'] else ''
             metric = card['statistics']
             stat_text = (f"historical picks {metric['picked_count']}, average selected pick index "
                          f"{metric['average_selected_pick_index']}"
@@ -1110,7 +1125,7 @@ def main(argv: list[str] | None = None) -> int:
                         if args.cards_db is None and args.cards_json is None else None)
         names = (load_card_names(args.cards_db) if args.cards_db is not None
                  else load_names(args.cards_json) if args.cards_json is not None
-                 else auto_catalog.names)
+        else auto_catalog.names)
         card_lookup = ((lambda arena_ids: lookup_cards(args.cards_db, arena_ids))
                        if args.cards_db is not None else
                        auto_catalog.lookup_cards if auto_catalog is not None else None)
@@ -1132,9 +1147,7 @@ def main(argv: list[str] | None = None) -> int:
     state = GameState(my_seat=selected_seat or 1)
     deck_index = ArenaDeckIndex(Path.home() / '.mtga_assistant' / 'arena_index.sqlite3')
     if auto_catalog is not None:
-        print('Card discovery: ' + (str(auto_catalog.path) if auto_catalog.connection
-              else 'Native database not found; using bundled historical name fallback'
-                   if auto_catalog.fallback_connection else 'No usable card database')
+        print('Card discovery: ' + (str(auto_catalog.path) if auto_catalog.connection else 'Native database not found; using bundled historical name fallback' if auto_catalog.fallback_connection else 'No usable card database')
               + '; mode=' + auto_catalog.mode, file=sys.stderr)
         if auto_catalog.discovery_error:
             print('Card discovery detail: ' + auto_catalog.discovery_error, file=sys.stderr)
@@ -1227,7 +1240,7 @@ def main(argv: list[str] | None = None) -> int:
                 result = worker.poll(state.revision)
                 if result:
                     analysis = (last_decision_analysis
-                               if result.revision == last_analysis_revision else None)
+                                if result.revision == last_analysis_revision else None)
                     emit_ai(result, args, analysis)
                     ai_waiting = False
             just_caught_up = False
@@ -1247,8 +1260,7 @@ def main(argv: list[str] | None = None) -> int:
             emit_desktop_event(args, {'type': 'state', 'revision': snapshot['revision']})
             decision_observed_at = (
                 time.monotonic()
-                if isinstance(snapshot.get('decision'), dict) and
-                snapshot['decision'].get('source') == 'arena_presented'
+                if isinstance(snapshot.get('decision'), dict) and snapshot['decision'].get('source') == 'arena_presented'
                 else None
             )
             notes = observations(snapshot)
@@ -1282,19 +1294,19 @@ def main(argv: list[str] | None = None) -> int:
                     (snapshot['turn_number'] is not None or
                      is_opening_lifecycle)):
                 has_current_arena_decision = (
-                    isinstance(snapshot.get('decision'), dict) and
-                    snapshot['decision'].get('source') == 'arena_presented'
+                        isinstance(snapshot.get('decision'), dict) and
+                        snapshot['decision'].get('source') == 'arena_presented'
                 )
                 analysis_choices = (decision_analysis.get('choices')
                                     if isinstance(decision_analysis, dict) else None)
                 has_supported_comparison = (
-                    has_current_arena_decision and
-                    isinstance(decision_analysis, dict) and
-                    decision_analysis.get('status') in {'analyzed', 'partial'} and
-                    decision_analysis.get('choice_provenance') == 'arena_presented' and
-                    decision_analysis.get('decision_kind') in {'actions', 'mulligan', 'bottom_cards'} and
-                    decision_analysis.get('comparison_mode') == 'flat_options' and
-                    isinstance(analysis_choices, list) and bool(analysis_choices)
+                        has_current_arena_decision and
+                        isinstance(decision_analysis, dict) and
+                        decision_analysis.get('status') in {'analyzed', 'partial'} and
+                        decision_analysis.get('choice_provenance') == 'arena_presented' and
+                        decision_analysis.get('decision_kind') in {'actions', 'mulligan', 'bottom_cards'} and
+                        decision_analysis.get('comparison_mode') == 'flat_options' and
+                        isinstance(analysis_choices, list) and bool(analysis_choices)
                 )
                 if args.action != 'watch':
                     ai_waiting = worker.submit(
@@ -1343,7 +1355,7 @@ def main(argv: list[str] | None = None) -> int:
                 result = worker.poll(state.revision)
                 if result:
                     analysis = (last_decision_analysis
-                               if result.revision == last_analysis_revision else None)
+                                if result.revision == last_analysis_revision else None)
                     emit_ai(result, args, analysis)
                     ai_waiting = False
                     break

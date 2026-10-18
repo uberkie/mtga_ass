@@ -371,7 +371,7 @@ def estimate_opponent(public_counts: Mapping[int, int], integrity: Any, *, my_se
         return base
     if state_integrity['status'] == 'partial':
         base['status'] = 'partial_state'
-        base['limitations'].append('Public observations may be incomplete because the game state is partial.')
+        base['limitations'].append("Public observations may be incomplete because the game state is partial.")
     if not total_copies or not known_copies:
         if base['status'] != 'partial_state':
             base['status'] = 'insufficient_public_evidence'

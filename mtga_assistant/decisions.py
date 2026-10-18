@@ -8,7 +8,6 @@ from typing import Any, Callable, Mapping, Sequence
 
 from mtga_assistant.cards import CatalogError, MALFORMED_CATALOG_FIELD
 
-
 MAX_DECISION_OPTIONS = 64
 MAX_DECISION_LABEL_LENGTH = 120
 MAX_MANA_SYMBOLS = 16
@@ -273,7 +272,7 @@ def _lookup_visible_catalogs(references: Sequence[int],
         if not isinstance(context, Mapping):
             continue
         arena_id, label = context.get('arena_id'), context.get('label')
-        if (type(arena_id) is not int or not 1 <= arena_id <= 2**63 - 1 or
+        if (type(arena_id) is not int or not 1 <= arena_id <= 2 ** 63 - 1 or
                 not isinstance(label, str) or not label.strip()):
             limitations.add('catalog_partial')
             continue
@@ -337,15 +336,15 @@ def _is_unmapped(name: Any) -> bool:
 
 
 def _visible_name(instance_id: Any, visible_cards: Mapping[int, str],
-                   fallback: str = 'Unknown visible card') -> str:
+                  fallback: str = 'Unknown visible card') -> str:
     if type(instance_id) is not int:
         return fallback
     return _clean_label(visible_cards.get(instance_id)) or fallback
 
 
 def _bounded_selection(selection: Any, visible_cards: Mapping[int, str],
-                        limitations: set[str], *, fallback: str,
-                        catalog_budget: _CatalogBudget | None = None) -> dict[str, Any] | None:
+                       limitations: set[str], *, fallback: str,
+                       catalog_budget: _CatalogBudget | None = None) -> dict[str, Any] | None:
     if not isinstance(selection, dict):
         return None
     ids = selection.get('ids')
@@ -618,8 +617,10 @@ def _target_options(request: Any, visible_cards: Mapping[int, str],
         minimum = target_group.get('minTargets')
         maximum = target_group.get('maxTargets')
         selected = target_group.get('selectedTargets', 0)
+
         def bounded(value: Any) -> int | None:
             return value if type(value) is int and 0 <= value <= MAX_DECISION_OPTIONS else None
+
         safe_min, safe_max, safe_selected = bounded(minimum), bounded(maximum), bounded(selected)
         if ((minimum is not None and safe_min is None) or
                 (maximum is not None and safe_max is None) or safe_selected is None):

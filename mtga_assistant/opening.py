@@ -15,7 +15,7 @@ OPENING_REVIEW_LIFECYCLES = frozenset({
 KNOWN_ONE_DROP_DORKS = frozenset({
     'llanowar elves', 'elvish mystic', 'fyndhorn elves', 'arbor elf',
     'birds of paradise', 'boreal druid', 'ignoble hierarch', 'noble hierarch',
-    'delighted halfling',
+    'delighted halfling'
 })
 
 

@@ -8,7 +8,6 @@ from typing import Any
 from mtga_assistant.state import DIAGNOSTICS
 from mtga_assistant.stream import StreamRecord
 
-
 MAX_ENTRIES_PER_GAME = 250
 MAX_GAMES_PER_LOG = 100
 MAX_MATCHES_PER_LOG = 100
@@ -269,8 +268,8 @@ class ReviewBuilder:
                     continue
                 name, owner, zone_id = zone.get('zone'), zone.get('owner'), zone.get('zone_id')
                 if (name not in ZONE_NAMES or
-                    owner is not None and (type(owner) is not int or owner not in (1, 2)) or
-                    not _valid_int(zone_id, minimum=1)):
+                        owner is not None and (type(owner) is not int or owner not in (1, 2)) or
+                        not _valid_int(zone_id, minimum=1)):
                     continue
                 count = zone.get('count')
                 count = count if _valid_int(count, minimum=0) else None
@@ -281,7 +280,7 @@ class ReviewBuilder:
                     continue
                 for card in cards_raw[:MAX_VISIBLE_INSTANCES]:
                     if (not isinstance(card, dict) or card.get('identity_status') != 'visible' or
-                        not _valid_int(card.get('id'), minimum=1)):
+                            not _valid_int(card.get('id'), minimum=1)):
                         continue
                     if name == 'Library' or (name == 'Hand' and owner != self.seat):
                         continue
@@ -377,7 +376,7 @@ class ReviewBuilder:
         if rank[integrity['status']] > rank[game_integrity['status']]:
             game_integrity['status'] = integrity['status']
         if (integrity['status'] == 'ended' or
-            integrity['limitations'] and integrity['status'] == 'uncertain'):
+                integrity['limitations'] and integrity['status'] == 'uncertain'):
             if integrity['status'] == 'ended':
                 game['end_status'] = 'ended'
 
@@ -394,18 +393,21 @@ class ReviewBuilder:
             summary['turn_start'] = turn if summary['turn_start'] is None else min(summary['turn_start'], turn)
             summary['turn_end'] = turn if summary['turn_end'] is None else max(summary['turn_end'], turn)
 
-    def _diff(self, old: dict[str, Any], new: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]]]:
+    def _diff(self, old: dict[str, Any], new: dict[str, Any]) -> tuple[
+        list[dict[str, Any]], list[str], list[dict[str, Any]]]:
         changes: list[dict[str, Any]] = []
         evidence: list[str] = []
         questions: list[dict[str, Any]] = []
         turn_changed = (old['turn'], old['phase'], old['step']) != (new['turn'], new['phase'], new['step'])
-        if turn_changed and any(value is not None for value in (old['turn'], new['turn'], old['phase'], new['phase'], old['step'], new['step'])):
+        if turn_changed and any(value is not None for value in
+                                (old['turn'], new['turn'], old['phase'], new['phase'], old['step'], new['step'])):
             changes.append({
                 'kind': 'turn_progress', 'from_turn': old['turn'], 'to_turn': new['turn'],
                 'from_phase': old['phase'], 'to_phase': new['phase'],
                 'from_step': old['step'], 'to_step': new['step'],
             })
-            evidence.append(f"Observed turn or phase progression to turn {new['turn'] if new['turn'] is not None else 'unknown'}.")
+            evidence.append(
+                f"Observed turn or phase progression to turn {new['turn'] if new['turn'] is not None else 'unknown'}.")
 
         for seat in ('1', '2'):
             before, after = old['life_totals'].get(seat), new['life_totals'].get(seat)
@@ -427,7 +429,8 @@ class ReviewBuilder:
             zone = new['zones'][key]
             changes.append({'kind': 'zone_count_change', 'zone': zone['zone'], 'owner': zone['owner'],
                             'from': before, 'to': after})
-            evidence.append(f"Observed {zone['zone']} count for seat {zone['owner'] if zone['owner'] is not None else 'unknown'} changed from {before} to {after}.")
+            evidence.append(
+                f"Observed {zone['zone']} count for seat {zone['owner'] if zone['owner'] is not None else 'unknown'} changed from {before} to {after}.")
 
         previous_cards = old['zone_cards']
         current_cards = new['zone_cards']
